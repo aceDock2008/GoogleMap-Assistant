@@ -474,35 +474,62 @@ ${JSON.stringify(placesContext)}
           }
         };
 
-        // Try candidate models in order: 2.0-flash -> 1.5-flash-latest -> 1.5-flash -> gemini-pro
+        // Try candidate models in order: gemini-2.0-flash, gemini-2.5-flash, gemini-1.5-flash, gemini-1.5-pro
         const candidateModels = [
-          { model: 'gemini-1.5-flash-latest', ver: 'v1beta' },
           { model: 'gemini-2.0-flash', ver: 'v1beta' },
-          { model: 'gemini-1.5-flash', ver: 'v1' },
+          { model: 'gemini-2.5-flash', ver: 'v1beta' },
+          { model: 'gemini-1.5-flash-latest', ver: 'v1beta' },
           { model: 'gemini-1.5-flash', ver: 'v1beta' },
-          { model: 'gemini-pro', ver: 'v1beta' }
+          { model: 'gemini-1.5-pro', ver: 'v1beta' }
         ];
 
         let lastError = null;
         let successData = null;
+        let successfulModel = '';
 
         for (const cand of candidateModels) {
           try {
             const resp = await callGeminiApi(cand.model, cand.ver, apiKey.value.trim(), requestBody);
             if (resp.ok) {
               successData = await resp.json();
+              successfulModel = cand.model;
               break;
             } else {
               const errJson = await resp.json();
-              lastError = errJson.error?.message || `HTTP ${resp.status}`;
+              lastError = `[${cand.model}] ` + (errJson.error?.message || `HTTP ${resp.status}`);
             }
           } catch (e) {
-            lastError = e.message;
+            lastError = `[${cand.model}] ` + e.message;
+          }
+        }
+
+        // If all standard models failed, query available models for this specific API key
+        if (!successData) {
+          try {
+            const listResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.value.trim()}`);
+            if (listResp.ok) {
+              const listData = await listResp.json();
+              const availableNames = (listData.models || [])
+                .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+                .map(m => m.name.replace('models/', ''));
+
+              if (availableNames.length > 0) {
+                // Try the first available model that supports generateContent
+                const dynamicModel = availableNames[0];
+                const dynamicResp = await callGeminiApi(dynamicModel, 'v1beta', apiKey.value.trim(), requestBody);
+                if (dynamicResp.ok) {
+                  successData = await dynamicResp.json();
+                  successfulModel = dynamicModel;
+                }
+              }
+            }
+          } catch (listErr) {
+            console.warn('ListModels fallback failed:', listErr);
           }
         }
 
         if (!successData) {
-          throw new Error(lastError || '所有模型端點皆無法連線，請檢查 API Key 是否正確。');
+          throw new Error(lastError || '所有模型端點皆無法連線，請確認 Google AI Studio 產生的 API Key 是否有效。');
         }
 
         const text = successData.candidates?.[0]?.content?.parts?.[0]?.text || '抱歉，暫無合適的推薦。';
