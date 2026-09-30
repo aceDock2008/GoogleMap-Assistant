@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="h-full bg-slate-900 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>MapAI - 私人地圖清單助理</title>
+  
+  <!-- PWA Settings -->
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  
+  <!-- Tailwind CSS & Lucide Icons & Vue 3 (CDN for pure client-side GitHub Pages) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    /* iOS Safe Area Support */
+    .pb-safe {
+      padding-bottom: env(safe-area-inset-bottom, 1rem);
+    }
+    .pt-safe {
+      padding-top: env(safe-area-inset-top, 0.5rem);
+    }
+    /* Hide scrollbar for category pills */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    [v-cloak] { display: none; }
+  </style>
+</head>
+<body class="h-full flex flex-col font-sans select-none antialiased">
+  <div id="app" v-cloak class="flex flex-col h-full max-w-md mx-auto w-full bg-slate-900 border-x border-slate-800 shadow-2xl relative">
+    
+    <!-- Top Header Bar -->
+    <header class="bg-slate-800/90 backdrop-blur-md border-b border-slate-700/60 px-4 py-3 pt-safe flex items-center justify-between sticky top-0 z-30">
+      <div class="flex items-center space-x-2">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/30">
+          <i data-lucide="map-pin" class="w-5 h-5 text-white"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-base tracking-wide flex items-center gap-1.5">
+            MapAI 
+            <span class="text-[10px] font-medium bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30">
+              {{ places.length }} 個地點
+            </span>
+          </h1>
+          <p class="text-xs text-slate-400 flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full" :class="userLocation ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'"></span>
+            <span v-if="userLocation">GPS 定位已連線</span>
+            <span v-else-if="locating">正在取得手機定位...</span>
+            <span v-else class="text-amber-400 cursor-pointer" @click="refreshLocation">點此取得定位</span>
+          </p>
+        </div>
+      </div>
+      
+      <!-- Right Action: Tutorial / Guide button -->
+      <button @click="showTutorial = true" class="p-2 rounded-full bg-slate-700/70 hover:bg-slate-700 text-slate-300 transition-colors">
+        <i data-lucide="help-circle" class="w-5 h-5"></i>
+      </button>
+    </header>
+
+    <!-- Main Content Area (Scrollable) -->
+    <main class="flex-1 overflow-y-auto px-4 py-3 space-y-4 pb-24">
+      
+      <!-- TAB 1: AI Assistant & Quick Search -->
+      <div v-if="currentTab === 'ai'" class="space-y-4">
+        
+        <!-- Gemini API Key Notice Banner if not set -->
+        <div v-if="!apiKey" class="p-3.5 rounded-xl bg-blue-950/60 border border-blue-800/60 text-xs text-blue-200 flex items-start gap-2.5">
+          <i data-lucide="key" class="w-5 h-5 text-blue-400 shrink-0 mt-0.5"></i>
+          <div>
+            <p class="font-semibold text-white">尚未設定 Gemini API Key</p>
+            <p class="mt-0.5 text-blue-300">請至「設定」輸入免費的 Google Gemini Key，即可啟動智慧語意對話與推薦。</p>
+            <button @click="currentTab = 'settings'" class="mt-2 text-blue-400 underline font-medium">立刻前往設定 &rarr;</button>
+          </div>
+        </div>
+
+        <!-- Chat / Prompt Box -->
+        <div class="bg-slate-800/80 rounded-2xl p-3 border border-slate-700/70 shadow-lg space-y-3">
+          <div class="flex items-center gap-2 text-xs font-medium text-slate-300">
+            <i data-lucide="sparkles" class="w-4 h-4 text-amber-400"></i>
+            <span>問問 AI 助理（支援距離、類型、氛圍）</span>
+          </div>
+
+          <!-- Quick Suggestion Pills -->
+          <div class="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+            <button v-for="prompt in quickPrompts" :key="prompt" @click="askQuick(prompt)"
+                    class="whitespace-nowrap px-2.5 py-1 text-xs rounded-full bg-slate-700/80 hover:bg-slate-700 text-slate-200 border border-slate-600/50 transition">
+              {{ prompt }}
+            </button>
+          </div>
+
+          <!-- Input field with voice-like style -->
+          <div class="relative">
+            <input v-model="userInput" @keyup.enter="sendAiQuery" type="text" 
+                   placeholder="例如：離我 2 公里內有哪些拉麵店？推薦一家"
+                   class="w-full bg-slate-900/90 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 pr-10">
+            <button @click="sendAiQuery" :disabled="aiLoading || !userInput.trim()"
+                    class="absolute right-2 top-2 p-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white transition-all">
+              <i v-if="!aiLoading" data-lucide="send" class="w-4 h-4"></i>
+              <i v-else data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- AI Response Display Card -->
+        <div v-if="aiResponse" class="bg-gradient-to-b from-indigo-950/50 to-slate-800/90 rounded-2xl p-4 border border-indigo-500/30 shadow-xl space-y-3">
+          <div class="flex items-center justify-between border-b border-indigo-800/40 pb-2">
+            <div class="flex items-center gap-2 text-indigo-300 text-xs font-semibold">
+              <i data-lucide="bot" class="w-4 h-4"></i>
+              <span>Gemini 推薦分析</span>
+            </div>
+            <button @click="aiResponse = ''" class="text-xs text-slate-400 hover:text-white">清除</button>
+          </div>
+          <div class="text-sm text-slate-200 leading-relaxed whitespace-pre-line">{{ aiResponse }}</div>
+
+          <!-- If AI recommended specific places, show cards -->
+          <div v-if="recommendedPlaces.length > 0" class="space-y-2 pt-2 border-t border-indigo-900/40">
+            <div class="text-xs text-slate-400 font-medium">推薦店家卡片：</div>
+            <div v-for="place in recommendedPlaces" :key="place.id" 
+                 class="p-3 bg-slate-900/80 rounded-xl border border-slate-700/80 flex items-center justify-between">
+              <div class="flex-1 min-w-0 pr-3">
+                <div class="font-medium text-sm text-white truncate">{{ place.name }}</div>
+                <div class="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
+                  <span class="text-blue-400 font-mono font-semibold">{{ formatDistance(place.distance) }}</span>
+                  <span>•</span>
+                  <span class="truncate">{{ place.category || '未分類' }}</span>
+                </div>
+              </div>
+              <a :href="getNavigationUrl(place)" target="_blank"
+                 class="px-3 py-1.5 rounded-lg bg-blue-600/90 hover:bg-blue-600 text-xs font-medium text-white flex items-center gap-1 shrink-0 shadow-md">
+                <i data-lucide="navigation" class="w-3.5 h-3.5"></i>
+                導航
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Places List in AI Tab (Nearby filtered) -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>離你最近的地點 (前 5 處)</span>
+            <button @click="currentTab = 'places'" class="text-blue-400 font-medium">查看全部清單 &rarr;</button>
+          </div>
+
+          <div v-if="sortedPlaces.length === 0" class="text-center py-8 text-slate-500 text-xs">
+            目前清單內尚無地點，請先至「+ 新增」貼上地點或匯入資料。
+          </div>
+
+          <div v-for="place in sortedPlaces.slice(0, 5)" :key="place.id"
+               class="p-3 bg-slate-800/60 rounded-xl border border-slate-700/50 flex items-center justify-between hover:border-slate-600 transition">
+            <div class="flex-1 min-w-0 pr-2">
+              <div class="font-medium text-sm text-slate-100 truncate">{{ place.name }}</div>
+              <div class="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
+                <span v-if="place.distance !== null" class="text-blue-400 font-semibold font-mono">{{ formatDistance(place.distance) }}</span>
+                <span v-if="place.distance !== null">•</span>
+                <span class="px-1.5 py-0.2 rounded bg-slate-700/70 text-slate-300 text-[10px]">{{ place.category || '自訂' }}</span>
+                <span v-if="place.visited" class="text-emerald-400 text-[10px]">✓ 已打卡</span>
+              </div>
+            </div>
+            <a :href="getNavigationUrl(place)" target="_blank" class="p-2 rounded-lg bg-slate-700/80 hover:bg-blue-600 text-slate-200 transition">
+              <i data-lucide="navigation-2" class="w-4 h-4"></i>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: All Places List & Categories -->
+      <div v-if="currentTab === 'places'" class="space-y-3">
+        <!-- Search bar & Filter -->
+        <div class="relative">
+          <input v-model="searchQuery" type="text" placeholder="快速搜尋店名、地址、分類..."
+                 class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500">
+          <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute right-3 top-3"></i>
+        </div>
+
+        <!-- Category Pills Filter -->
+        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+          <button @click="selectedCategory = 'all'"
+                  :class="selectedCategory === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'"
+                  class="px-3 py-1 rounded-full text-xs font-medium border border-slate-700 transition">
+            全部 ({{ places.length }})
+          </button>
+          <button v-for="cat in categories" :key="cat" @click="selectedCategory = cat"
+                  :class="selectedCategory === cat ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'"
+                  class="px-3 py-1 rounded-full text-xs font-medium border border-slate-700 transition whitespace-nowrap">
+            {{ cat }}
+          </button>
+        </div>
+
+        <!-- Filtered List -->
+        <div class="space-y-2.5">
+          <div v-for="place in filteredPlaces" :key="place.id"
+               class="p-3.5 bg-slate-800/70 rounded-xl border border-slate-700/60 space-y-2">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0">
+                <div class="font-semibold text-sm text-white flex items-center gap-1.5">
+                  <span class="truncate">{{ place.name }}</span>
+                  <span v-if="place.visited" class="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1 rounded shrink-0">已吃/已去</span>
+                </div>
+                <div class="text-xs text-slate-400 mt-0.5 truncate">{{ place.address || '無詳細地址' }}</div>
+              </div>
+
+              <!-- Distance Badge -->
+              <div v-if="place.distance !== null" class="shrink-0 text-right">
+                <span class="text-xs font-semibold font-mono text-blue-400">{{ formatDistance(place.distance) }}</span>
+              </div>
+            </div>
+
+            <!-- Note if any -->
+            <div v-if="place.note" class="text-xs bg-slate-900/60 p-2 rounded-lg text-slate-300 border border-slate-800 italic">
+              "{{ place.note }}"
+            </div>
+
+            <!-- Card Actions -->
+            <div class="flex items-center justify-between pt-1 border-t border-slate-700/40 text-xs">
+              <div class="flex items-center gap-2">
+                <button @click="toggleVisited(place)" class="text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition">
+                  <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+                  {{ place.visited ? '取消標記' : '標為已訪' }}
+                </button>
+                <button @click="deletePlace(place)" class="text-slate-500 hover:text-rose-400 flex items-center gap-1 transition">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                  刪除
+                </button>
+              </div>
+
+              <a :href="getNavigationUrl(place)" target="_blank"
+                 class="px-2.5 py-1 rounded bg-blue-600/80 hover:bg-blue-600 text-white font-medium flex items-center gap-1 transition">
+                <i data-lucide="navigation" class="w-3 h-3"></i>
+                導航
+              </a>
+            </div>
+          </div>
+
+          <div v-if="filteredPlaces.length === 0" class="text-center py-12 text-slate-500 text-xs">
+            查無相符地點
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: Add New Place / Mobile Quick Paste -->
+      <div v-if="currentTab === 'add'" class="space-y-4">
+        <!-- Smart Paste Box -->
+        <div class="bg-gradient-to-b from-blue-950/40 to-slate-800/80 p-4 rounded-2xl border border-blue-600/30 space-y-3">
+          <div class="flex items-center gap-2 text-sm font-semibold text-blue-300">
+            <i data-lucide="link" class="w-4 h-4"></i>
+            <span>手機隨手存：貼上 Google Maps 連結</span>
+          </div>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            在手機 Google Maps 點任一家店按「分享」→「複製連結」，回到這裡點下方按鈕貼上即可自動解析！
+          </p>
+
+          <div class="space-y-2">
+            <input v-model="newPlaceUrl" type="text" placeholder="https://maps.app.goo.gl/... 或包含店名的分享文字"
+                   class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500">
+            
+            <div class="flex gap-2">
+              <button @click="readFromClipboard" class="flex-1 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-xs font-medium text-slate-200 flex items-center justify-center gap-1.5 transition">
+                <i data-lucide="clipboard" class="w-3.5 h-3.5"></i>
+                讀取手機剪貼簿
+              </button>
+              <button @click="parseAndAddUrl" :disabled="!newPlaceUrl.trim() || parsingUrl"
+                      class="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition">
+                <i v-if="!parsingUrl" data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+                <i v-else data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i>
+                解析並加入
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Manual Add Form -->
+        <div class="bg-slate-800/60 p-4 rounded-2xl border border-slate-700/60 space-y-3">
+          <div class="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+            <i data-lucide="edit-3" class="w-4 h-4 text-slate-400"></i>
+            <span>或是手動填寫地點</span>
+          </div>
+
+          <div class="space-y-2 text-xs">
+            <div>
+              <label class="text-slate-400 block mb-1">店家/景點名稱 *</label>
+              <input v-model="manualForm.name" type="text" placeholder="例如：隱家拉麵 赤峰店"
+                     class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white">
+            </div>
+            <div>
+              <label class="text-slate-400 block mb-1">分類標籤</label>
+              <input v-model="manualForm.category" type="text" placeholder="例如：拉麵、咖啡、景點"
+                     class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white">
+            </div>
+            <div>
+              <label class="text-slate-400 block mb-1">地址或所在區域</label>
+              <input v-model="manualForm.address" type="text" placeholder="例如：台北市大同區中山北路..."
+                     class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white">
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-slate-400 block mb-1">緯度 (可略)</label>
+                <input v-model.number="manualForm.lat" type="number" step="any" placeholder="25.033"
+                       class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white">
+              </div>
+              <div>
+                <label class="text-slate-400 block mb-1">經度 (可略)</label>
+                <input v-model.number="manualForm.lng" type="number" step="any" placeholder="121.565"
+                       class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white">
+              </div>
+            </div>
+            <div>
+              <label class="text-slate-400 block mb-1">個人備忘筆記</label>
+              <input v-model="manualForm.note" type="text" placeholder="例如：朋友推薦招牌真鯛魚白湯"
+                     class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white">
+            </div>
+            <button @click="addManualPlace" :disabled="!manualForm.name.trim()"
+                    class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-xs font-semibold text-white transition mt-2">
+              儲存至我的清單
+            </button>
+          </div>
+        </div>
+
+        <!-- Batch Import from File (Google Takeout / CSV / JSON) -->
+        <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50 space-y-2.5">
+          <div class="text-xs font-semibold text-slate-300 flex items-center justify-between">
+            <span class="flex items-center gap-1.5">
+              <i data-lucide="file-up" class="w-4 h-4 text-emerald-400"></i>
+              批次整包匯入 (Takeout / CSV / JSON)
+            </span>
+            <button @click="showTutorial = true" class="text-blue-400 text-[11px] underline">手機下載教學</button>
+          </div>
+          <p class="text-[11px] text-slate-400 leading-normal">
+            若你在手機下載了 Google Takeout 的「已儲存的地點.json」或自備 CSV，可點下方按鈕直接匯入。具備自動去重機制，不會重複疊加。
+          </p>
+          <label class="block w-full text-center py-2.5 px-3 rounded-xl border border-dashed border-slate-600 hover:border-blue-400 bg-slate-900/50 cursor-pointer text-xs font-medium text-slate-300 transition">
+            <i data-lucide="upload" class="w-4 h-4 mx-auto mb-1 text-slate-400"></i>
+            選擇檔案匯入 (.json 或 .csv)
+            <input type="file" @change="handleFileUpload" accept=".json,.csv" class="hidden">
+          </label>
+        </div>
+      </div>
+
+      <!-- TAB 4: Settings & Data Management -->
+      <div v-if="currentTab === 'settings'" class="space-y-4 text-xs">
+        <!-- Gemini API Key Setup -->
+        <div class="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/70 space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="font-semibold text-white text-sm flex items-center gap-1.5">
+              <i data-lucide="cpu" class="w-4 h-4 text-blue-400"></i>
+              Gemini API 設定
+            </span>
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-blue-400 underline text-[11px]">
+              免費取得 Key &rarr;
+            </a>
+          </div>
+          <p class="text-slate-400 leading-normal">
+            您的 API Key 僅保存在本機手機瀏覽器中，直接由手機端發送請求，絕不上傳任何第三方伺服器。
+          </p>
+          <div class="space-y-2">
+            <input v-model="apiKey" type="password" placeholder="AIzaSy..."
+                   class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+            <button @click="saveApiKey" class="w-full py-2 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold text-white transition">
+              儲存 API Key
+            </button>
+          </div>
+        </div>
+
+        <!-- Backup & Clear Data -->
+        <div class="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/70 space-y-3">
+          <span class="font-semibold text-white text-sm flex items-center gap-1.5">
+            <i data-lucide="database" class="w-4 h-4 text-amber-400"></i>
+            資料備份與管理
+          </span>
+          <p class="text-slate-400">
+            目前本機已儲存 <strong class="text-white">{{ places.length }}</strong> 筆地點資料。
+          </p>
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <button @click="exportData" class="py-2 px-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium transition flex items-center justify-center gap-1">
+              <i data-lucide="download" class="w-3.5 h-3.5"></i>
+              備份下載 JSON
+            </button>
+            <button @click="confirmClear" class="py-2 px-3 rounded-xl bg-rose-950/70 hover:bg-rose-900 border border-rose-800/60 text-rose-300 font-medium transition flex items-center justify-center gap-1">
+              <i data-lucide="trash" class="w-3.5 h-3.5"></i>
+              清空本地資料
+            </button>
+          </div>
+        </div>
+
+        <!-- Preload Demo Data -->
+        <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50 space-y-2">
+          <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+            <i data-lucide="box" class="w-4 h-4 text-purple-400"></i>
+            初次體驗範例資料
+          </span>
+          <p class="text-slate-400 text-[11px]">
+            如果想先體驗 AI 詢問（例如：「離我最近的拉麵」、「找甜點」），可一鍵載入台北精選美食與景點測試資料。
+          </p>
+          <button @click="loadSampleData" class="py-2 px-3 rounded-xl bg-purple-950/60 hover:bg-purple-900/80 border border-purple-700/60 text-purple-200 font-medium w-full transition">
+            載入 10 筆示範地點（拉麵/咖啡/景點）
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Bottom Navigation Bar (Mobile Friendly) -->
+    <nav class="bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 px-2 py-2 pb-safe fixed bottom-0 left-0 right-0 max-w-md mx-auto z-30 flex justify-around">
+      <button @click="currentTab = 'ai'" :class="currentTab === 'ai' ? 'text-blue-400' : 'text-slate-500 hover:text-slate-300'"
+              class="flex flex-col items-center gap-1 py-1 px-3 transition">
+        <i data-lucide="sparkles" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">AI 助理</span>
+      </button>
+
+      <button @click="currentTab = 'places'" :class="currentTab === 'places' ? 'text-blue-400' : 'text-slate-500 hover:text-slate-300'"
+              class="flex flex-col items-center gap-1 py-1 px-3 transition">
+        <i data-lucide="list" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">地點清單</span>
+      </button>
+
+      <button @click="currentTab = 'add'" :class="currentTab === 'add' ? 'text-blue-400' : 'text-slate-500 hover:text-slate-300'"
+              class="flex flex-col items-center gap-1 py-1 px-3 transition">
+        <i data-lucide="plus-circle" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">快速新增</span>
+      </button>
+
+      <button @click="currentTab = 'settings'" :class="currentTab === 'settings' ? 'text-blue-400' : 'text-slate-500 hover:text-slate-300'"
+              class="flex flex-col items-center gap-1 py-1 px-3 transition">
+        <i data-lucide="settings" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">設定教學</span>
+      </button>
+    </nav>
+
+    <!-- Tutorial Modal (手機更新與零外洩教學) -->
+    <div v-if="showTutorial" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="bg-slate-900 border border-slate-700 rounded-t-3xl sm:rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+          <div class="font-bold text-base text-white flex items-center gap-2">
+            <i data-lucide="book-open" class="w-5 h-5 text-blue-400"></i>
+            手機使用與更新教學
+          </div>
+          <button @click="showTutorial = false" class="p-1 rounded-full text-slate-400 hover:text-white">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <div class="p-5 overflow-y-auto space-y-5 text-xs text-slate-300 leading-relaxed">
+          <!-- Section 1: Daily single add -->
+          <div class="space-y-2 bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
+            <h4 class="font-semibold text-white text-sm flex items-center gap-2">
+              <span class="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs">1</span>
+              日常滑手機隨手存（零隱私外洩）
+            </h4>
+            <p>平時在 Google Maps App 看到喜歡的店或景點：</p>
+            <ol class="list-decimal list-inside space-y-1 text-slate-400 pl-1">
+              <li>點該地點的 <strong class="text-white">「分享」</strong> 按鈕。</li>
+              <li>點 <strong class="text-white">「複製連結」</strong>。</li>
+              <li>開啟本 App，切換到 <strong class="text-white">「快速新增」</strong> 點「讀取剪貼簿」即可自動加入！</li>
+            </ol>
+            <div class="text-[11px] text-emerald-400 bg-emerald-950/60 p-2 rounded border border-emerald-800/40">
+              💡 <strong>隱私保證：</strong>單店分享網址是公共地標網址，完全不含個人帳號資訊，百分之百私密安全！
+            </div>
+          </div>
+
+          <!-- Section 2: Zero leakage batch takeout -->
+          <div class="space-y-2 bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
+            <h4 class="font-semibold text-white text-sm flex items-center gap-2">
+              <span class="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs">2</span>
+              整包清單手機直匯（免公開分享）
+            </h4>
+            <p>不想公開清單、又想一次載入幾十個地點：</p>
+            <ol class="list-decimal list-inside space-y-1 text-slate-400 pl-1">
+              <li>手機瀏覽器前往 <a href="https://takeout.google.com" target="_blank" class="text-blue-400 underline">takeout.google.com</a>。</li>
+              <li>點「全部取消勾選」，只單獨勾選 <strong class="text-white">「地圖 (您的地點)」</strong>。</li>
+              <li>按下一步產生下載連結，在手機下載 ZIP 解壓縮。</li>
+              <li>在「快速新增」頁面點選「批次整包匯入」，選擇解壓縮出來的 JSON 或 CSV 檔案。</li>
+            </ol>
+            <div class="text-[11px] text-blue-300 bg-blue-950/60 p-2 rounded border border-blue-800/40">
+              ⚡ <strong>自動去重：</strong>系統自動依經緯度與店名比對，日後重複匯入也不會產生重複項目。
+            </div>
+          </div>
+
+          <!-- Section 3: Add to home screen -->
+          <div class="space-y-2 bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
+            <h4 class="font-semibold text-white text-sm flex items-center gap-2">
+              <span class="w-5 h-5 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs">3</span>
+              如何將此 PWA 加入手機主畫面
+            </h4>
+            <ul class="space-y-1 text-slate-400 pl-1">
+              <li><strong>iOS (Safari)：</strong>點下方分享按鈕 &rarr; 選擇「加入主畫面」。</li>
+              <li><strong>Android (Chrome)：</strong>點右上角選單 `⋮` &rarr; 選擇「安裝應用程式」或「加到主畫面」。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="p-3 border-t border-slate-800 bg-slate-900">
+          <button @click="showTutorial = false" class="w-full py-2.5 rounded-xl bg-blue-600 font-semibold text-white text-xs">
+            我知道了，開始使用
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Main Logic Script -->
+  <script src="./app.js"></script>
+</body>
+</html>
