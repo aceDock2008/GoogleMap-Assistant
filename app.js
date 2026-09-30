@@ -408,10 +408,20 @@ createApp({
       reader.readAsText(file);
     };
 
-    // --- Gemini AI Assistant Query ---
+    // --- Gemini AI Assistant Query with Auto-Fallback ---
     const askQuick = (promptText) => {
       userInput.value = promptText;
       sendAiQuery();
+    };
+
+    const callGeminiApi = async (modelName, apiVersion, key, bodyData) => {
+      const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${modelName}:generateContent?key=${key}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyData)
+      });
+      return res;
     };
 
     const sendAiQuery = async () => {
@@ -445,39 +455,57 @@ ${JSON.stringify(placesContext)}
 使用者的 GPS 目前位置狀態：${userLocation.value ? `緯度 ${userLocation.value.lat}, 經度 ${userLocation.value.lng}` : '未取得精準 GPS，以預估距離比對'}。
 
 請遵循以下規則：
-1. 嚴格根據上述使用者的【私人清單】回答，請勿憑空捏造未在清單內的地點。
-2. 針對使用者的問題（包含距離限制如 1km/2km、食物種類如拉麵/咖啡、是否去過、備忘筆記等），進行篩選排序與精準推薦。
+1. 嚴格根據上述使用者的【私人清單】回答。如果清單中沒有符合的店，請明確告知清單內目前沒有，並可給予大略的周圍建議。
+2. 針對使用者的問題（包含距離限制如 1km/2km、食物種類如拉麵/咖啡/魯肉飯、是否去過、備忘筆記等），進行篩選排序與精準推薦。
 3. 若有多家符合，推薦最適合的 1~3 家，並簡短說明推薦理由（距離近、招牌特色、筆記內容等）。
 4. 在回答最後，若有推薦特定店家，請在獨立行寫下 JSON 陣列格式的推薦 ID，例如：[RECOMMENDED_IDS: "id1", "id2"]，以便前端為使用者呈現一鍵導航卡片。
 5. 語氣熱情、簡潔精練，繁體中文回答。`;
 
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey.value}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: 'user',
-                  parts: [{ text: `${systemPrompt}\n\n使用者指令：${q}` }]
-                }
-              ],
-              generationConfig: {
-                temperature: 0.4,
-                maxOutputTokens: 800
-              }
-            })
+        const requestBody = {
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: `${systemPrompt}\n\n使用者指令：${q}` }]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 800
           }
-        );
+        };
 
-        if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error?.message || 'API 呼叫失敗');
+        // Try candidate models in order: 2.0-flash -> 1.5-flash-latest -> 1.5-flash -> gemini-pro
+        const candidateModels = [
+          { model: 'gemini-1.5-flash-latest', ver: 'v1beta' },
+          { model: 'gemini-2.0-flash', ver: 'v1beta' },
+          { model: 'gemini-1.5-flash', ver: 'v1' },
+          { model: 'gemini-1.5-flash', ver: 'v1beta' },
+          { model: 'gemini-pro', ver: 'v1beta' }
+        ];
+
+        let lastError = null;
+        let successData = null;
+
+        for (const cand of candidateModels) {
+          try {
+            const resp = await callGeminiApi(cand.model, cand.ver, apiKey.value.trim(), requestBody);
+            if (resp.ok) {
+              successData = await resp.json();
+              break;
+            } else {
+              const errJson = await resp.json();
+              lastError = errJson.error?.message || `HTTP ${resp.status}`;
+            }
+          } catch (e) {
+            lastError = e.message;
+          }
         }
 
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '抱歉，暫無合適的推薦。';
+        if (!successData) {
+          throw new Error(lastError || '所有模型端點皆無法連線，請檢查 API Key 是否正確。');
+        }
+
+        const text = successData.candidates?.[0]?.content?.parts?.[0]?.text || '抱歉，暫無合適的推薦。';
 
         // Parse recommended IDs if any
         const match = text.match(/\[RECOMMENDED_IDS:\s*([^\]]+)\]/);
