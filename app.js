@@ -10,6 +10,11 @@ createApp({
     const locating = ref(false);
     const showTutorial = ref(false);
 
+    // API Key test state
+    const testingKey = ref(false);
+    const keyTestResult = ref('');
+    const keyTestSuccess = ref(false);
+
     // AI & Search state
     const userInput = ref('');
     const aiResponse = ref('');
@@ -131,6 +136,44 @@ createApp({
     const saveApiKey = () => {
       localStorage.setItem('mapai_gemini_key', apiKey.value.trim());
       alert('API Key 已儲存至手機本機！');
+    };
+
+    const testApiKey = async () => {
+      const key = apiKey.value.trim();
+      if (!key) {
+        alert('請先輸入 API Key');
+        return;
+      }
+      testingKey.value = true;
+      keyTestResult.value = '正在連線向 Google 伺服器驗證金鑰...';
+      keyTestSuccess.value = false;
+
+      try {
+        const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+        const data = await resp.json();
+
+        if (!resp.ok) {
+          keyTestSuccess.value = false;
+          keyTestResult.value = `❌ 驗證失敗：${data.error?.message || '未知錯誤'} (錯誤碼: ${data.error?.code})`;
+        } else {
+          const genModels = (data.models || [])
+            .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+            .map(m => m.name.replace('models/', ''));
+
+          if (genModels.length > 0) {
+            keyTestSuccess.value = true;
+            keyTestResult.value = `✅ 連線成功！此金鑰支援 ${genModels.length} 個 AI 模型：\n${genModels.slice(0, 4).join(', ')}`;
+          } else {
+            keyTestSuccess.value = false;
+            keyTestResult.value = `⚠️ 金鑰連線成功，但 Google 帳號尚未為此金鑰開通 generateContent 權限。`;
+          }
+        }
+      } catch (err) {
+        keyTestSuccess.value = false;
+        keyTestResult.value = `❌ 連線發生網路錯誤：${err.message}`;
+      } finally {
+        testingKey.value = false;
+      }
     };
 
     // --- Computed Views ---
@@ -701,6 +744,10 @@ ${JSON.stringify(placesContext)}
       getNavigationUrl,
       handleFileUpload,
       saveApiKey,
+      testApiKey,
+      testingKey,
+      keyTestResult,
+      keyTestSuccess,
       loadSampleData,
       exportData,
       confirmClear
