@@ -85,9 +85,21 @@
 
         <!-- Chat / Prompt Box -->
         <div class="bg-slate-800/80 rounded-2xl p-3 border border-slate-700/70 shadow-lg space-y-3">
-          <div class="flex items-center gap-2 text-xs font-medium text-slate-300">
-            <i data-lucide="sparkles" class="w-4 h-4 text-amber-400"></i>
-            <span>問問 AI 助理（支援距離、類型、氛圍）</span>
+          <div class="flex items-center justify-between text-xs">
+            <div class="flex items-center gap-1.5 font-medium text-slate-300">
+              <i data-lucide="sparkles" class="w-4 h-4 text-amber-400"></i>
+              <span>問問 AI 助理</span>
+            </div>
+            <!-- Allow External Search Toggle Switch -->
+            <label class="flex items-center gap-1.5 cursor-pointer select-none">
+              <span class="text-[11px]" :class="allowExternal ? 'text-blue-400 font-semibold' : 'text-slate-400'">
+                {{ allowExternal ? '🌐 允許推薦外部名店' : '🔒 僅限私人清單' }}
+              </span>
+              <div class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" v-model="allowExternal" class="sr-only peer">
+                <div class="w-8 h-4 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3.5 after:transition-all peer-checked:bg-blue-600"></div>
+              </div>
+            </label>
           </div>
 
           <!-- Quick Suggestion Pills -->
@@ -518,6 +530,6 @@
   </div>
 
   <!-- Main Logic Script with version bust -->
-  <script src="./app.js?v=2.1"></script>
+  <script src="./app.js?v=2.2"></script>
 </body>
 </html>

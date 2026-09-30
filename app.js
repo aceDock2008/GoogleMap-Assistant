@@ -19,6 +19,7 @@ createApp({
     const userInput = ref('');
     const aiResponse = ref('');
     const aiLoading = ref(false);
+    const allowExternal = ref(true); // Default true: allow outside places
     const recommendedPlaces = ref([]);
     const quickPrompts = [
       '離我最近有哪些拉麵店？推薦一家',
@@ -492,17 +493,34 @@ createApp({
           distance: p.distance !== null ? `${formatDistance(p.distance)}` : '距離未知'
         }));
 
-        const systemPrompt = `你是一個個人美食與旅遊地圖專屬助理。以下是使用者手機儲存的私人地點清單資料（JSON）：
+        let systemPrompt = '';
+        if (allowExternal.value) {
+          systemPrompt = `你是一個個人美食與旅遊地圖專屬智慧助理。
+以下是使用者手機儲存的私人地點清單資料（JSON）：
 ${JSON.stringify(placesContext)}
 
 使用者的 GPS 目前位置狀態：${userLocation.value ? `緯度 ${userLocation.value.lat}, 經度 ${userLocation.value.lng}` : '未取得精準 GPS，以預估距離比對'}。
 
+【模式設定：允許推薦外部名店】
 請遵循以下規則：
-1. 嚴格根據上述使用者的【私人清單】回答。如果清單中沒有符合的店，請明確告知清單內目前沒有，並可給予大略的周圍建議。
-2. 針對使用者的問題（包含距離限制如 1km/2km、食物種類如拉麵/咖啡/魯肉飯、是否去過、備忘筆記等），進行篩選排序與精準推薦。
-3. 若有多家符合，推薦最適合的 1~3 家，並簡短說明推薦理由（距離近、招牌特色、筆記內容等）。
-4. 在回答最後，若有推薦特定店家，請在獨立行寫下 JSON 陣列格式的推薦 ID，例如：[RECOMMENDED_IDS: "id1", "id2"]，以便前端為使用者呈現一鍵導航卡片。
-5. 語氣熱情、簡潔精練，繁體中文回答。`;
+1. 優先比對使用者的【私人清單】。若清單內有符合條件的店家，優先推薦並標註為「🌟 您的清單收藏」。
+2. 若清單內數量不足或沒有相符項目（例如使用者尋找魯肉飯，但清單內只有拉麵），請充分發揮你的美食與景點知識庫，主動推薦使用者周邊 1~3 家最道地、Google 評分極高的【外部推薦名店】（標註為「🌐 探索新名店」），並附上推薦特色。
+3. 若推薦清單內的店家，請在獨立行輸出：[RECOMMENDED_IDS: "id1", "id2"]。
+4. 繁體中文回答，語氣熱情、生動、精練。`;
+        } else {
+          systemPrompt = `你是一個個人美食與旅遊地圖專屬助理。
+以下是使用者手機儲存的私人地點清單資料（JSON）：
+${JSON.stringify(placesContext)}
+
+使用者的 GPS 目前位置狀態：${userLocation.value ? `緯度 ${userLocation.value.lat}, 經度 ${userLocation.value.lng}` : '未取得精準 GPS，以預估距離比對'}。
+
+【模式設定：嚴格僅限私人清單】
+請遵循以下規則：
+1. 嚴格「只」能根據上述使用者的私人清單回答！如果私人清單內沒有符合的店家，請如實告知「您的清單內目前尚未收藏此類地點」，不可推薦清單外的外部店家。
+2. 若有符合項目，推薦最適合的 1~3 家，並說明距離與推薦原因。
+3. 若推薦清單內的店家，請在獨立行輸出：[RECOMMENDED_IDS: "id1", "id2"]。
+4. 繁體中文回答，語氣簡潔精練。`;
+        }
 
         const requestBody = {
           contents: [
@@ -517,13 +535,12 @@ ${JSON.stringify(placesContext)}
           }
         };
 
-        // Try candidate models in order: gemini-2.0-flash, gemini-2.5-flash, gemini-1.5-flash, gemini-1.5-pro
+        // Try candidate models in order: gemini-2.5-flash (confirmed supported!), gemini-2.5-pro, gemini-2.0-flash
         const candidateModels = [
-          { model: 'gemini-2.0-flash', ver: 'v1beta' },
           { model: 'gemini-2.5-flash', ver: 'v1beta' },
-          { model: 'gemini-1.5-flash-latest', ver: 'v1beta' },
-          { model: 'gemini-1.5-flash', ver: 'v1beta' },
-          { model: 'gemini-1.5-pro', ver: 'v1beta' }
+          { model: 'gemini-2.5-pro', ver: 'v1beta' },
+          { model: 'gemini-2.0-flash', ver: 'v1beta' },
+          { model: 'gemini-1.5-flash', ver: 'v1beta' }
         ];
 
         let lastError = null;
@@ -722,6 +739,7 @@ ${JSON.stringify(placesContext)}
       userInput,
       aiResponse,
       aiLoading,
+      allowExternal,
       recommendedPlaces,
       quickPrompts,
       searchQuery,
