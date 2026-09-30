@@ -698,6 +698,28 @@ ${JSON.stringify(placesContext)}
       }
     };
 
+    // --- Force Update & Clear Cache ---
+    const forceUpdateApp = async () => {
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          for (let reg of regs) {
+            await reg.unregister();
+          }
+        }
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          for (let key of keys) {
+            await caches.delete(key);
+          }
+        }
+      } catch (e) {
+        console.warn('Cache clear warning:', e);
+      }
+      // Force reload with timestamp query to bypass iOS browser cache
+      window.location.href = window.location.pathname + '?reload=' + Date.now();
+    };
+
     // --- Share Target API Handling (when shared from mobile) ---
     const checkShareTargetParams = () => {
       const urlParams = new URLSearchParams(window.location.search);
@@ -768,7 +790,8 @@ ${JSON.stringify(placesContext)}
       keyTestSuccess,
       loadSampleData,
       exportData,
-      confirmClear
+      confirmClear,
+      forceUpdateApp
     };
   }
 }).mount('#app');

@@ -427,6 +427,21 @@
             載入 10 筆示範地點（拉麵/咖啡/景點）
           </button>
         </div>
+
+        <!-- Force Update & Refresh Cache -->
+        <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50 space-y-2">
+          <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-4 h-4 text-cyan-400"></i>
+            版本更新與快取清理
+          </span>
+          <p class="text-slate-400 text-[11px]">
+            若手機主畫面 App 未自動顯示最新功能，點此按鈕將清空 Service Worker 快取並自動載入最新程式碼。
+          </p>
+          <button @click="forceUpdateApp" class="py-2.5 px-3 rounded-xl bg-cyan-950/70 hover:bg-cyan-900/80 border border-cyan-700/60 text-cyan-200 font-semibold w-full transition flex items-center justify-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            強制清除快取並載入最新版 (v2.3)
+          </button>
+        </div>
       </div>
     </main>
 
@@ -530,6 +545,6 @@
   </div>
 
   <!-- Main Logic Script with version bust -->
-  <script src="./app.js?v=2.2"></script>
+  <script src="./app.js?v=2.3"></script>
 </body>
 </html>
